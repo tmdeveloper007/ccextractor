@@ -54,7 +54,7 @@ bitflags! {
     /// Each debug message can belong to one or more of these types. The
     /// constants of this struct can be used as bitflags for one message to
     /// belong to more than one type.
-    #[derive(Default, Clone, Copy, Debug, PartialEq, Eq, Hash)]
+    #[derive(Default)]
     pub struct DebugMessageFlag: u16 {
         /// Show information related to parsing the container
         const PARSE          = 0x1;

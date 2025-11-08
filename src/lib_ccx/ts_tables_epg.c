@@ -344,6 +344,15 @@ void EPG_output_live(struct lib_ccx_ctx *ctx)
 				c = true;
 			}
 	}
+
+	// Also check for unoutputted events in TS_PMT_MAP_SIZE fallback
+	for (j = 0; j < ctx->eit_programs[TS_PMT_MAP_SIZE].array_len; j++)
+		if (ctx->eit_programs[TS_PMT_MAP_SIZE].epg_events[j].live_output == false)
+		{
+			c = true;
+			break;
+		}
+
 	if (!c)
 		return;
 
@@ -358,6 +367,35 @@ void EPG_output_live(struct lib_ccx_ctx *ctx)
 		fprintf(f, "    <display-name>%i</display-name>\n", ctx->demux_ctx->pinfo[i].program_number);
 		fprintf(f, "  </channel>\n");
 	}
+
+	// Add channels for any unmapped service_ids from TS_PMT_MAP_SIZE
+	for (j = 0; j < ctx->eit_programs[TS_PMT_MAP_SIZE].array_len; j++)
+	{
+		if (ctx->eit_programs[TS_PMT_MAP_SIZE].epg_events[j].live_output == false)
+		{
+			uint32_t channel_id = ctx->eit_programs[TS_PMT_MAP_SIZE].epg_events[j].service_id;
+
+			// Check if we already have a channel entry for this service_id
+			int channel_found = 0;
+			for (i = 0; i < ctx->demux_ctx->nb_program; i++)
+			{
+				if (ctx->demux_ctx->pinfo[i].program_number == channel_id)
+				{
+					channel_found = 1;
+					break;
+				}
+			}
+
+			// If channel doesn't exist, create it for ATSC fallback data
+			if (!channel_found)
+			{
+				fprintf(f, "  <channel id=\"%u\">\n", channel_id);
+				fprintf(f, "    <display-name>%u</display-name>\n", channel_id);
+				fprintf(f, "  </channel>\n");
+			}
+		}
+	}
+
 	for (i = 0; i < ctx->demux_ctx->nb_program; i++)
 	{
 		for (j = 0; j < ctx->eit_programs[i].array_len; j++)
@@ -366,6 +404,17 @@ void EPG_output_live(struct lib_ccx_ctx *ctx)
 				ctx->eit_programs[i].epg_events[j].live_output = true;
 				EPG_print_event(&ctx->eit_programs[i].epg_events[j], ctx->demux_ctx->pinfo[i].program_number, f);
 			}
+	}
+
+	// Output events from TS_PMT_MAP_SIZE fallback
+	for (j = 0; j < ctx->eit_programs[TS_PMT_MAP_SIZE].array_len; j++)
+	{
+		if (ctx->eit_programs[TS_PMT_MAP_SIZE].epg_events[j].live_output == false)
+		{
+			ctx->eit_programs[TS_PMT_MAP_SIZE].epg_events[j].live_output = true;
+			uint32_t channel_id = ctx->eit_programs[TS_PMT_MAP_SIZE].epg_events[j].service_id;
+			EPG_print_event(&ctx->eit_programs[TS_PMT_MAP_SIZE].epg_events[j], channel_id, f);
+		}
 	}
 	fprintf(f, "</tv>");
 	fclose(f);
@@ -420,9 +469,33 @@ void EPG_output(struct lib_ccx_ctx *ctx)
 				EPG_print_event(&ctx->eit_programs[i].epg_events[j], ctx->demux_ctx->pinfo[i].program_number, f);
 		}
 
-		if (ctx->demux_ctx->nb_program == 0) // Stream has no PMT, fall back to unordered events
-			for (j = 0; j < ctx->eit_programs[TS_PMT_MAP_SIZE].array_len; j++)
-				EPG_print_event(&ctx->eit_programs[TS_PMT_MAP_SIZE].epg_events[j], ctx->eit_programs[TS_PMT_MAP_SIZE].epg_events[j].service_id, f);
+		// Output events from TS_PMT_MAP_SIZE fallback (for ATSC streams with unmapped EPG data)
+		// This handles cases where EIT tables are processed before VCT tables
+		for (j = 0; j < ctx->eit_programs[TS_PMT_MAP_SIZE].array_len; j++)
+		{
+			uint32_t channel_id = ctx->eit_programs[TS_PMT_MAP_SIZE].epg_events[j].service_id;
+
+			// Check if we already have a channel entry for this service_id
+			int channel_found = 0;
+			for (i = 0; i < ctx->demux_ctx->nb_program; i++)
+			{
+				if (ctx->demux_ctx->pinfo[i].program_number == channel_id)
+				{
+					channel_found = 1;
+					break;
+				}
+			}
+
+			// If channel doesn't exist, create it for ATSC fallback data
+			if (!channel_found)
+			{
+				fprintf(f, "  <channel id=\"%u\">\n", channel_id);
+				fprintf(f, "    <display-name>%u</display-name>\n", channel_id);
+				fprintf(f, "  </channel>\n");
+			}
+
+			EPG_print_event(&ctx->eit_programs[TS_PMT_MAP_SIZE].epg_events[j], channel_id, f);
+		}
 	}
 	else
 	{ // print current events only
@@ -433,6 +506,40 @@ void EPG_output(struct lib_ccx_ctx *ctx)
 			{
 				if (ce == ctx->eit_programs[i].epg_events[j].id)
 					EPG_print_event(&ctx->eit_programs[i].epg_events[j], ctx->demux_ctx->pinfo[i].program_number, f);
+			}
+		}
+
+		// Also handle current events from TS_PMT_MAP_SIZE fallback (for ATSC streams)
+		ce = ctx->eit_current_events[TS_PMT_MAP_SIZE];
+		if (ce != 0)
+		{
+			for (j = 0; j < ctx->eit_programs[TS_PMT_MAP_SIZE].array_len; j++)
+			{
+				if (ce == ctx->eit_programs[TS_PMT_MAP_SIZE].epg_events[j].id)
+				{
+					uint32_t channel_id = ctx->eit_programs[TS_PMT_MAP_SIZE].epg_events[j].service_id;
+
+					// Check if we already have a channel entry for this service_id
+					int channel_found = 0;
+					for (i = 0; i < ctx->demux_ctx->nb_program; i++)
+					{
+						if (ctx->demux_ctx->pinfo[i].program_number == channel_id)
+						{
+							channel_found = 1;
+							break;
+						}
+					}
+
+					// If channel doesn't exist, create it for ATSC fallback data
+					if (!channel_found)
+					{
+						fprintf(f, "  <channel id=\"%u\">\n", channel_id);
+						fprintf(f, "    <display-name>%u</display-name>\n", channel_id);
+						fprintf(f, "  </channel>\n");
+					}
+
+					EPG_print_event(&ctx->eit_programs[TS_PMT_MAP_SIZE].epg_events[j], channel_id, f);
+				}
 			}
 		}
 	}
